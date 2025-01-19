@@ -5,6 +5,7 @@
 import json
 import transformers
 import torch
+import os
 
 from concurrent.futures import ThreadPoolExecutor
 from math import ceil
@@ -90,6 +91,51 @@ print("Candidates_labels sublist are ready")
 # %% [code] {"execution":{"iopub.status.busy":"2025-01-14T00:25:14.891554Z","iopub.execute_input":"2025-01-14T00:25:14.891839Z","iopub.status.idle":"2025-01-14T00:25:15.022237Z","shell.execute_reply.started":"2025-01-14T00:25:14.891818Z","shell.execute_reply":"2025-01-14T00:25:15.021428Z"},"jupyter":{"outputs_hidden":false}}
 # Dataset name
 dataset_name = "tib-core"
+predictions_folder = "./predictions"
+
+# function pour uniquement les fichier non traiter
+def filter_unprocessed_records(tibkat_record_list, predictions_folder, last_processed_filename=None):
+    """
+    Filtre la liste des documents pour ne conserver que ceux qui n'ont pas encore été traités.
+
+    Args:
+        tibkat_record_list (list): Liste des enregistrements Tibkat.
+        predictions_folder (str): Chemin vers le dossier contenant les fichiers de prédiction.
+        last_processed_filename (str, optional): Nom du dernier fichier traité. Si fourni, 
+                                                 filtre à partir de ce fichier.
+
+    Returns:
+        list: Liste des enregistrements non traités.
+    """
+    # Charger les fichiers déjà traités dans le dossier de prédictions
+    processed_files = set()
+    if not last_processed_filename:
+        if os.path.exists(predictions_folder):
+            for file in os.listdir(predictions_folder):
+                if file.endswith(".json"):
+                    processed_files.add(file)
+        else:
+            return tibkat_record_list
+    else:
+        # Si un fichier est spécifié, trouver sa position dans la liste
+        last_processed_index = None
+        for i, record in enumerate(tibkat_record_list):
+            if record["filename"] == last_processed_filename:
+                last_processed_index = i
+                break
+        if last_processed_index is not None:
+            # Retourner uniquement les fichiers après le dernier traité
+            return tibkat_record_list[last_processed_index + 1 :]
+        else:
+            print(f"Warning: Filename {last_processed_filename} not found in tibkat_record_list.")
+            return []
+
+    # Filtrer les fichiers non encore traités
+    unprocessed_records = [
+        record for record in tibkat_record_list if f"{record['filename']}.json" not in processed_files
+    ]
+
+    return unprocessed_records
 
 # Load tiblat record file
 tibkat_record_file = f"./tibkat_test_{dataset_name}_subjects.json"
@@ -98,10 +144,13 @@ tibkat_record_file = f"./tibkat_test_{dataset_name}_subjects.json"
 with open(tibkat_record_file, "r", encoding="utf-8") as f:
     tibkat_record_list = json.load(f)
 
+# filter input list if we have checkpoint
+tibkat_record_list = unprocessed_records = filter_unprocessed_records(tibkat_record_list, predictions_folder)
+
 tibkat_dataset = Dataset.from_list(tibkat_record_list)
 
 # Notify
-print("All Tibkat records loaded successfully")
+print("All unprocessed files have been loaded")
 
 # %% [markdown] {"jupyter":{"outputs_hidden":false}}
 # ## Run Predictions and save
@@ -171,11 +220,12 @@ print("All Tibkat records loaded successfully")
 # %% [code] {"execution":{"iopub.status.busy":"2025-01-14T00:18:19.540800Z","iopub.execute_input":"2025-01-14T00:18:19.541168Z","iopub.status.idle":"2025-01-14T00:18:19.553415Z","shell.execute_reply.started":"2025-01-14T00:18:19.541141Z","shell.execute_reply":"2025-01-14T00:18:19.552551Z"},"jupyter":{"outputs_hidden":false}}
 
 # Fonction pour traiter un batch sur un GPU donné
-def process_batch_on_gpu(batch, candidates_labels_list, gnd_sublists, classifier, device):
+def process_batch_on_gpu(batch, candidates_labels_list, gnd_sublists, classifier, device, base_output_folder="./predictions"):
     results = []
 
     # Préparer les inputs du batch
     batch_texts = [item['text'] for item in batch]
+    batch_paths = [item['path'] for item in batch]
     batch_filenames = [item['filename'] for item in batch]
 
     # Initialiser un conteneur pour les prédictions par fichier
@@ -202,8 +252,21 @@ def process_batch_on_gpu(batch, candidates_labels_list, gnd_sublists, classifier
         group_index = group_index + 1 
 
     # Trier et structurer les résultats pour chaque fichier
-    for filename, predictions in batch_predictions.items():
+    for idx, (filename, predictions) in enumerate(batch_predictions.items()):
         sorted_predicted_labels = sorted(predictions, key=lambda x: x["score"], reverse=True)[:50]
+        
+        # Créer le chemin complet pour le fichier JSON
+        output_folder = os.path.join(base_output_folder, batch_paths[idx].strip("/"))
+        os.makedirs(output_folder, exist_ok=True)
+        output_file = os.path.join(output_folder, f"{filename}.json")
+        
+        # Écrire les prédictions dans un fichier JSON
+        with open(output_file, "w", encoding="utf-8") as f:
+            json.dump({"filename": filename, "predictions": sorted_predicted_labels}, f, ensure_ascii=False, indent=4)
+            
+        # print
+        print(f"Fichier de prédictions créé : {output_file}")
+            
         results.append({
             "filename": filename,
             "predictions": sorted_predicted_labels

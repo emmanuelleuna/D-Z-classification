@@ -7,11 +7,9 @@ import transformers
 import torch
 
 from concurrent.futures import ThreadPoolExecutor
-from functools import lru_cache
 from math import ceil
 from datasets import Dataset
 from transformers import pipeline
-from itertools import chain
 
 # Notify
 print("Successfull import")
@@ -172,11 +170,6 @@ print("All Tibkat records loaded successfully")
 
 # %% [code] {"execution":{"iopub.status.busy":"2025-01-14T00:18:19.540800Z","iopub.execute_input":"2025-01-14T00:18:19.541168Z","iopub.status.idle":"2025-01-14T00:18:19.553415Z","shell.execute_reply.started":"2025-01-14T00:18:19.541141Z","shell.execute_reply":"2025-01-14T00:18:19.552551Z"},"jupyter":{"outputs_hidden":false}}
 
-# Mise en cache pour éviter les calculs redondants
-@lru_cache(maxsize=None)
-def get_cached_gnd_code(label, current_gnd_sublist):
-    return get_gnd_code_from_name(label, current_gnd_sublist)
-
 # Fonction pour traiter un batch sur un GPU donné
 def process_batch_on_gpu(batch, candidates_labels_list, gnd_sublists, classifier, device):
     results = []
@@ -201,7 +194,7 @@ def process_batch_on_gpu(batch, candidates_labels_list, gnd_sublists, classifier
 
             # Ajouter les prédictions pour chaque élément du batch
             batch_predictions[filename].extend(
-                {'code': get_cached_gnd_code(label, tuple(current_gnd_sublist)), 'score': score}
+                {'code': get_gnd_code_from_name(label, current_gnd_sublist), 'score': score}
                 for label, score in zip(result['labels'], result['scores'])
             )
 
@@ -262,7 +255,7 @@ def parallel_prediction_2(
 
 
 # Notify
-print("Batch-enabled multi-GPU prediction function defined successfully")
+print("Optimization technique 2 defined")
 
 # %% [markdown] {"jupyter":{"outputs_hidden":false}}
 # ### Define prediction function with optimisation techniques - 3
@@ -515,7 +508,7 @@ all_predictions = parallel_prediction_2(
     gnd_sublists=gnd_sublists,
     model_name=model_name,
     batch_size=8,
-    max_workers=2
+    max_workers=4
 )
 
 # Appel technique 3 ------------------------------------
